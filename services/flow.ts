@@ -7,7 +7,7 @@ import { GoogleGenAI } from '@google/genai';
 import type { MediaAsset } from '../types';
 
 // ---------- Settings (stored in localStorage) ----------
-export const TEXT_MODEL = 'gemini-2.5-pro';
+export const TEXT_MODEL = 'gemini-3.1-pro-preview';
 export const IMAGE_MODELS: Record<string, string> = {
   'Nano Banana 2': 'gemini-3.1-flash-image-preview',
   'Nano Banana Pro': 'gemini-3-pro-image-preview',
