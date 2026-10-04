@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flow, getApiKey, setApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS } from './services/flow';
+import { Flow, getApiKey, setApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS, fetchAvailableModels } from './services/flow';
 import { SellingPoint, GlobalContext } from './types';
 import { extractVisualParams, generateNarrative, compilePrompt, extractGlobalParams, parseAspectRatio, buildGenerationRefs, spUsesModels } from './services/workflow';
 // --- Hooks ---
@@ -137,6 +137,32 @@ export default function VisualPromptApp() {
   const [apiKey, setApiKeyState] = useState(getApiKey());
   const [textModel, setTextModelState] = useState(getTextModelName());
   const [imageModel, setImageModelState] = useState(getImageModelName());
+  const [textModelOptions, setTextModelOptions] = useState<string[]>(Object.keys(TEXT_MODELS));
+  const [imageModelOptions, setImageModelOptions] = useState<string[]>(Object.keys(IMAGE_MODELS));
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  const loadModels = async (keyOverride?: string) => {
+    const k = keyOverride ?? apiKey;
+    if (!k || !k.trim()) return;
+    setIsLoadingModels(true);
+    try {
+      const res = await fetchAvailableModels();
+      const textKeys = Object.keys(res.textModels);
+      const imageKeys = Object.keys(res.imageModels);
+      if (textKeys.length > 0) setTextModelOptions(textKeys);
+      if (imageKeys.length > 0) setImageModelOptions(imageKeys);
+    } catch (err) {
+      console.warn('获取可用模型失败:', err);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    if (apiKey.trim()) {
+      loadModels(apiKey);
+    }
+  }, []);
   const importInputRef = useRef<HTMLInputElement>(null);
   const exportInputs = () => {
     const data = { app: 'FlowLocal', version: 1, globalContext, sellingPoints };
@@ -267,25 +293,38 @@ export default function VisualPromptApp() {
       {/* Sidebar */}
       <div className="w-[320px] border-r border-white/15 flex flex-col p-[12px] gap-[20px] overflow-y-auto dark-scrollbar">
         <div className="flex flex-col gap-2">
-          <SectionLabel>Settings</SectionLabel>
+          <div className="flex items-center justify-between px-2">
+            <span className="text-[11px] font-medium text-[rgba(218,220,224,0.9)] tracking-[0.1px]">Settings</span>
+            <button
+              type="button"
+              onClick={() => loadModels()}
+              disabled={isLoadingModels || !apiKey.trim()}
+              className="text-[10px] text-white/50 hover:text-white flex items-center gap-1 transition-colors disabled:opacity-30 cursor-pointer"
+              title="根据当前 API Key 自动拉取 Google 官方可用模型列表"
+            >
+              <span className={`material-symbols-outlined text-[13px] ${isLoadingModels ? 'animate-spin' : ''}`}>sync</span>
+              <span>{isLoadingModels ? '拉取中...' : '拉取可用模型'}</span>
+            </button>
+          </div>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => { setApiKeyState(e.target.value); setApiKey(e.target.value); }}
+            onBlur={() => { if (apiKey.trim()) loadModels(apiKey); }}
             placeholder="Gemini API Key"
             className="border border-[#595959] focus:border-[#969696] rounded-xl w-full px-3 py-2.5 bg-transparent text-[11px] font-medium text-white placeholder-[rgba(218,220,224,0.75)] focus:outline-none"
           />
           <FieldDropdown
             label="Text Model (推理模型)"
             value={textModel}
-            options={Object.keys(TEXT_MODELS)}
+            options={textModelOptions}
             onChange={(v) => { setTextModelState(v); setTextModelName(v); }}
             className="w-full"
           />
           <FieldDropdown
             label="Image Model (生图模型)"
             value={imageModel}
-            options={Object.keys(IMAGE_MODELS)}
+            options={imageModelOptions}
             onChange={(v) => { setImageModelState(v); setImageModelName(v); }}
             className="w-full"
           />

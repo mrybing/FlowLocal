@@ -31,14 +31,14 @@ export function setApiKey(key: string) {
 }
 export function getTextModelName(): string {
   const saved = localStorage.getItem(TEXT_MODEL_STORAGE);
-  return saved && TEXT_MODELS[saved] ? saved : 'Gemini 3.8 Flash (推荐)';
+  return saved || 'Gemini 3.8 Flash (推荐)';
 }
 export function setTextModelName(name: string) {
   localStorage.setItem(TEXT_MODEL_STORAGE, name);
 }
 export function getImageModelName(): string {
   const saved = localStorage.getItem(IMAGE_MODEL_STORAGE);
-  return saved && IMAGE_MODELS[saved] ? saved : 'Nano Banana 2';
+  return saved || 'Nano Banana 2';
 }
 export function setImageModelName(name: string) {
   localStorage.setItem(IMAGE_MODEL_STORAGE, name);
@@ -48,6 +48,54 @@ function client() {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error('请先在左侧 Settings 中填写 Gemini API Key');
   return new GoogleGenAI({ apiKey });
+}
+
+/**
+ * 自动从 Google API 拉取当前 API Key 可用的所有模型
+ */
+export async function fetchAvailableModels(): Promise<{
+  textModels: Record<string, string>;
+  imageModels: Record<string, string>;
+}> {
+  const apiKey = getApiKey();
+  if (!apiKey) return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
+
+  try {
+    const pager = await client().models.list();
+    const dynamicText: Record<string, string> = {};
+    const dynamicImage: Record<string, string> = { ...IMAGE_MODELS };
+
+    for await (const m of pager) {
+      const item = m as any;
+      const id = item.name?.replace(/^models\//, '') || '';
+      if (!id) continue;
+      const methods: string[] = item.supportedGenerationMethods || [];
+      if (methods.length > 0 && !methods.includes('generateContent')) continue;
+
+      const label = item.displayName ? `${item.displayName} (${id})` : id;
+
+      if (id.includes('image')) {
+        dynamicImage[label] = id;
+      } else if (!id.includes('embedding') && !id.includes('aqa') && !id.includes('imagen')) {
+        dynamicText[label] = id;
+      }
+    }
+
+    // 确保默认推荐置顶
+    const mergedText: Record<string, string> = {
+      'Gemini 3.8 Flash (推荐)': 'gemini-3.8-flash',
+      ...dynamicText,
+      ...TEXT_MODELS,
+    };
+
+    return {
+      textModels: mergedText,
+      imageModels: dynamicImage,
+    };
+  } catch (err) {
+    console.warn('自动拉取可用模型失败，使用预设模型列表:', err);
+    return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
+  }
 }
 
 type Img = { base64: string; mimeType: string };
@@ -66,7 +114,8 @@ export const Flow = {
       prompt: string,
       options: { systemInstruction?: string; images?: Img[] } = {}
     ): Promise<{ text: string }> {
-      const modelId = TEXT_MODELS[getTextModelName()] || TEXT_MODEL;
+      const selected = getTextModelName();
+      const modelId = TEXT_MODELS[selected] || selected || TEXT_MODEL;
       const res = await client().models.generateContent({
         model: modelId,
         contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
@@ -85,7 +134,8 @@ export const Flow = {
       aspectRatio: string;
       referenceImages?: Img[];
     }): Promise<MediaAsset> {
-      const modelId = IMAGE_MODELS[getImageModelName()];
+      const selected = getImageModelName();
+      const modelId = IMAGE_MODELS[selected] || selected || 'gemini-3.1-flash-image-preview';
       const parts = [
         ...(opts.referenceImages || []).map(i => ({ inlineData: { mimeType: i.mimeType, data: i.base64 } })),
         { text: opts.prompt },
