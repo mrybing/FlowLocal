@@ -20,15 +20,28 @@ export const IMAGE_MODELS: Record<string, string> = {
   'Nano Banana Pro': 'gemini-3-pro-image-preview',
 };
 const KEY_STORAGE = 'flowlocal.apiKey';
+const IMAGE_KEY_STORAGE = 'flowlocal.imageApiKey';
 const TEXT_MODEL_STORAGE = 'flowlocal.textModel';
 const IMAGE_MODEL_STORAGE = 'flowlocal.imageModel';
 
-export function getApiKey(): string {
+export function getTextApiKey(): string {
   return localStorage.getItem(KEY_STORAGE) || '';
 }
-export function setApiKey(key: string) {
+export function setTextApiKey(key: string) {
   localStorage.setItem(KEY_STORAGE, key.trim());
 }
+
+export function getImageApiKey(): string {
+  return localStorage.getItem(IMAGE_KEY_STORAGE) || '';
+}
+export function setImageApiKey(key: string) {
+  localStorage.setItem(IMAGE_KEY_STORAGE, key.trim());
+}
+
+// 兼容别名
+export const getApiKey = getTextApiKey;
+export const setApiKey = setTextApiKey;
+
 export function getTextModelName(): string {
   const saved = localStorage.getItem(TEXT_MODEL_STORAGE);
   return saved || 'Gemini 3.8 Flash (推荐)';
@@ -44,64 +57,92 @@ export function setImageModelName(name: string) {
   localStorage.setItem(IMAGE_MODEL_STORAGE, name);
 }
 
-function client() {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error('请先在左侧 Settings 中填写 Gemini API Key');
+function textClient() {
+  const apiKey = getTextApiKey();
+  if (!apiKey) throw new Error('请先在左侧 Settings 中填写推理 API Key（如免费层 Key）');
+  return new GoogleGenAI({ apiKey });
+}
+
+function imageClient() {
+  const apiKey = getImageApiKey() || getTextApiKey();
+  if (!apiKey) throw new Error('请先在左侧 Settings 中填写生图 API Key（或推理 API Key）');
   return new GoogleGenAI({ apiKey });
 }
 
 /**
- * 自动从 Google API 拉取当前 API Key 可用的所有模型
+ * 自动从 Google API 拉取当前 API Key 可用的所有模型（支持推理与生图 Key 独立拉取）
  */
 export async function fetchAvailableModels(): Promise<{
   textModels: Record<string, string>;
   imageModels: Record<string, string>;
 }> {
-  const apiKey = getApiKey();
-  if (!apiKey) return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
+  const textKey = getTextApiKey();
+  const imgKey = getImageApiKey() || textKey;
+  if (!textKey && !imgKey) return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
 
-  try {
-    const pager = await client().models.list();
-    const dynamicText: Record<string, string> = {};
-    const dynamicImage: Record<string, string> = { ...IMAGE_MODELS };
+  const dynamicText: Record<string, string> = {};
+  const dynamicImage: Record<string, string> = { ...IMAGE_MODELS };
 
-    for await (const m of pager) {
-      const item = m as any;
-      const id = item.name?.replace(/^models\//, '') || '';
-      if (!id) continue;
-      const methods: string[] = item.supportedGenerationMethods || [];
-      if (methods.length > 0 && !methods.includes('generateContent')) continue;
-
-      const label = item.displayName ? `${item.displayName} (${id})` : id;
-
-      if (id.includes('image')) {
-        dynamicImage[label] = id;
-      } else if (!id.includes('embedding') && !id.includes('aqa') && !id.includes('imagen')) {
-        dynamicText[label] = id;
-      }
-    }
-
-    // 确保默认推荐置顶
-    const mergedText: Record<string, string> = {
-      'Gemini 3.8 Flash (推荐)': 'gemini-3.8-flash',
-      ...dynamicText,
-      ...TEXT_MODELS,
-    };
-
-    // 缓存完整的映射关系到本地
-    cachedDynamicModels = { ...mergedText, ...dynamicImage };
+  // 1. 使用推理 API Key 拉取文本模型
+  if (textKey) {
     try {
-      localStorage.setItem(DYNAMIC_MODELS_CACHE_KEY, JSON.stringify(cachedDynamicModels));
-    } catch (e) {}
+      const pager = await textClient().models.list();
+      for await (const m of pager) {
+        const item = m as any;
+        const id = item.name?.replace(/^models\//, '') || '';
+        if (!id) continue;
+        const methods: string[] = item.supportedGenerationMethods || [];
+        if (methods.length > 0 && !methods.includes('generateContent')) continue;
 
-    return {
-      textModels: mergedText,
-      imageModels: dynamicImage,
-    };
-  } catch (err) {
-    console.warn('自动拉取可用模型失败，使用预设模型列表:', err);
-    return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
+        const label = item.displayName ? `${item.displayName} (${id})` : id;
+        if (!id.includes('image') && !id.includes('embedding') && !id.includes('aqa') && !id.includes('imagen')) {
+          dynamicText[label] = id;
+        }
+      }
+    } catch (err) {
+      console.warn('拉取推理模型失败:', err);
+    }
   }
+
+  // 2. 使用生图 API Key 拉取生图模型
+  if (imgKey) {
+    try {
+      const imgC = new GoogleGenAI({ apiKey: imgKey });
+      const pager = await imgC.models.list();
+      for await (const m of pager) {
+        const item = m as any;
+        const id = item.name?.replace(/^models\//, '') || '';
+        if (!id) continue;
+        const methods: string[] = item.supportedGenerationMethods || [];
+        if (methods.length > 0 && !methods.includes('generateContent')) continue;
+
+        const label = item.displayName ? `${item.displayName} (${id})` : id;
+        if (id.includes('image')) {
+          dynamicImage[label] = id;
+        }
+      }
+    } catch (err) {
+      console.warn('拉取生图模型失败:', err);
+    }
+  }
+
+  // 确保默认推荐置顶
+  const mergedText: Record<string, string> = {
+    'Gemini 3.8 Flash (推荐)': 'gemini-3.8-flash',
+    ...dynamicText,
+    ...TEXT_MODELS,
+  };
+
+  // 缓存完整的映射关系到本地
+  cachedDynamicModels = { ...mergedText, ...dynamicImage };
+  try {
+    localStorage.setItem(DYNAMIC_MODELS_CACHE_KEY, JSON.stringify(cachedDynamicModels));
+  } catch (e) {}
+
+  return {
+    textModels: mergedText,
+    imageModels: dynamicImage,
+  };
 }
 
 const DYNAMIC_MODELS_CACHE_KEY = 'flowlocal.dynamicModelsMap';
@@ -182,7 +223,7 @@ export const Flow = {
       const modelId = resolveModelId(selected, TEXT_MODEL, TEXT_MODELS);
       try {
         return await withRetry(async () => {
-          const res = await client().models.generateContent({
+          const res = await textClient().models.generateContent({
             model: modelId,
             contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
             config: { systemInstruction: options.systemInstruction },
@@ -194,7 +235,7 @@ export const Flow = {
         // 若重试后依然由于 Google 503 高峰不可用，且当前不是 gemini-2.5-flash，自动使用 2.5-flash 降级兜底
         if ((msg.includes('503') || msg.includes('high demand') || msg.includes('UNAVAILABLE')) && modelId !== 'gemini-2.5-flash') {
           console.warn(`[Gemini API] 模型 ${modelId} 遭遇严重高峰无法使用，自动降级至 gemini-2.5-flash 进行兜底重试...`);
-          const fallbackRes = await client().models.generateContent({
+          const fallbackRes = await textClient().models.generateContent({
             model: 'gemini-2.5-flash',
             contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
             config: { systemInstruction: options.systemInstruction },
@@ -222,7 +263,7 @@ export const Flow = {
         { text: opts.prompt },
       ];
       return await withRetry(async () => {
-        const res = await client().models.generateContent({
+        const res = await imageClient().models.generateContent({
           model: modelId,
           contents: [{ role: 'user', parts }],
           config: {

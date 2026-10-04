@@ -26,7 +26,7 @@
 | AI SDK | `@google/genai`，浏览器直连，无后端 |
 | 推理模型 | 支持根据 API Key 自动动态拉取，界面下拉切换：`gemini-3.8-flash`（默认推荐）/ `gemini-2.5-flash` 等 |
 | 生图模型 | 界面下拉切换：Nano Banana 2 = `gemini-3.1-flash-image-preview`（默认）/ Nano Banana Pro = `gemini-3-pro-image-preview` |
-| 持久化 | 仅 localStorage 保存 API Key 与所选模型；项目数据不自动保存，刷新即重置 |
+| 持久化 | 仅 localStorage 保存 API Key（支持「推理 API Key」与「生图 API Key」分开配置，生图 Key 留空时自动回退共用推理 Key）与所选模型；项目数据不自动保存，刷新即重置 |
 
 运行：`npm install` → `npm run dev`（默认 http://localhost:5173）。类型检查：`npx tsc --noEmit`。
 
@@ -44,7 +44,7 @@ FlowLocal/
 ├── App.tsx               # 全部界面、状态管理、流水线调度、生图触发、导入导出
 ├── types.ts              # 数据契约
 ├── services/
-│   ├── flow.ts           # Gemini API 封装（文本 / 生图 / 选图 / 下载 / 设置存取）
+│   ├── flow.ts           # Gemini API 封装（文本 / 生图 / 选图 / 下载 / 设置存取，双 Key 支持）
 │   └── workflow.ts       # 4 节点流水线、参考图编号、Prompt 编译
 ├── vite.config.ts / tsconfig.json / package.json
 └── AGENTS.md
@@ -52,15 +52,17 @@ FlowLocal/
 
 | 文件 | 职责 |
 | :--- | :--- |
-| [services/flow.ts](file:///c:/Users/CUTE/Desktop/dev/FlowLocal/services/flow.ts) | 导出 `Flow.generate.text` / `Flow.generate.image` / `Flow.media.select` / `Flow.download`，以及 API Key、生图模型的 localStorage 读写。 |
+| [services/flow.ts](file:///c:/Users/CUTE/Desktop/dev/FlowLocal/services/flow.ts) | 导出 `Flow.generate.text` / `Flow.generate.image` / `Flow.media.select` / `Flow.download`，以及推理与生图 API Key、模型偏好的 localStorage 读写。 |
 | [services/workflow.ts](file:///c:/Users/CUTE/Desktop/dev/FlowLocal/services/workflow.ts) | 全局风格分析、卖点视觉提取、叙事构思、Prompt 编译，以及 `spUsesModels` / `withSpEnv` / `buildGenerationRefs`。 |
 | [App.tsx](file:///c:/Users/CUTE/Desktop/dev/FlowLocal/App.tsx) | 侧边栏（Settings、Campaign Context、Universal Assets、Character Inventory）与主区（卖点卡片、Prompt 审核、结果预览）。 |
 | [types.ts](file:///c:/Users/CUTE/Desktop/dev/FlowLocal/types.ts) | `GlobalContext`、`SellingPoint`、`VisualParams`、`NarrativeConcept`、`MediaAsset` 等类型。 |
 
 ### `services/flow.ts` 接口
 
-- `Flow.generate.text(prompt, { systemInstruction?, images? }) → { text }`：多模态文本 / JSON 生成。
-- `Flow.generate.image({ prompt, aspectRatio, referenceImages? }) → MediaAsset`：参考图作为 inlineData **按数组顺序放在 prompt 文本之前**传入，第 N 张即 `image N`。
+- `getTextApiKey()` / `setTextApiKey()`：推理用 API Key（可填写免费层 Key）。
+- `getImageApiKey()` / `setImageApiKey()`：生图用 API Key（可填写付费层 Key；留空自动使用推理 Key）。
+- `Flow.generate.text(prompt, { systemInstruction?, images? }) → { text }`：多模态文本 / JSON 生成（使用推理 Key）。
+- `Flow.generate.image({ prompt, aspectRatio, referenceImages? }) → MediaAsset`：生图（使用生图 Key）。参考图作为 inlineData **按数组顺序放在 prompt 文本之前**传入，第 N 张即 `image N`。
 - `Flow.media.select() → MediaAsset | null`：浏览器文件选择器，读成 base64，`mediaId` 为随机 UUID（仅作标识，不参与 API 调用）。
 - `Flow.download({ base64, mimeType, filename })`：触发浏览器下载。
 - 未填 API Key 时抛出明确的中文错误提示。

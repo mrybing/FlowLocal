@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flow, getApiKey, setApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS, fetchAvailableModels } from './services/flow';
+import { Flow, getApiKey, setApiKey, getImageApiKey, setImageApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS, fetchAvailableModels } from './services/flow';
 import { SellingPoint, GlobalContext } from './types';
 import { extractVisualParams, generateNarrative, compilePrompt, extractGlobalParams, parseAspectRatio, buildGenerationRefs, spUsesModels } from './services/workflow';
 // --- Hooks ---
@@ -135,15 +135,17 @@ export default function VisualPromptApp() {
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [apiKey, setApiKeyState] = useState(getApiKey());
+  const [imageApiKey, setImageApiKeyState] = useState(getImageApiKey());
   const [textModel, setTextModelState] = useState(getTextModelName());
   const [imageModel, setImageModelState] = useState(getImageModelName());
   const [textModelOptions, setTextModelOptions] = useState<string[]>(Object.keys(TEXT_MODELS));
   const [imageModelOptions, setImageModelOptions] = useState<string[]>(Object.keys(IMAGE_MODELS));
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  const loadModels = async (keyOverride?: string) => {
-    const k = keyOverride ?? apiKey;
-    if (!k || !k.trim()) return;
+  const loadModels = async () => {
+    const tKey = getApiKey();
+    const iKey = getImageApiKey();
+    if (!tKey.trim() && !iKey.trim()) return;
     setIsLoadingModels(true);
     try {
       const res = await fetchAvailableModels();
@@ -159,8 +161,8 @@ export default function VisualPromptApp() {
   };
 
   useEffect(() => {
-    if (apiKey.trim()) {
-      loadModels(apiKey);
+    if (apiKey.trim() || imageApiKey.trim()) {
+      loadModels();
     }
   }, []);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -303,7 +305,7 @@ export default function VisualPromptApp() {
             <button
               type="button"
               onClick={() => loadModels()}
-              disabled={isLoadingModels || !apiKey.trim()}
+              disabled={isLoadingModels || (!apiKey.trim() && !imageApiKey.trim())}
               className="text-[10px] text-white/50 hover:text-white flex items-center gap-1 transition-colors disabled:opacity-30 cursor-pointer"
               title="根据当前 API Key 自动拉取 Google 官方可用模型列表"
             >
@@ -311,14 +313,36 @@ export default function VisualPromptApp() {
               <span>{isLoadingModels ? '拉取中...' : '拉取可用模型'}</span>
             </button>
           </div>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => { setApiKeyState(e.target.value); setApiKey(e.target.value); }}
-            onBlur={() => { if (apiKey.trim()) loadModels(apiKey); }}
-            placeholder="Gemini API Key"
-            className="border border-[#595959] focus:border-[#969696] rounded-xl w-full px-3 py-2.5 bg-transparent text-[11px] font-medium text-white placeholder-[rgba(218,220,224,0.75)] focus:outline-none"
-          />
+          <div className="flex flex-col gap-1.5">
+            <div>
+              <div className="flex justify-between items-center px-1 mb-1">
+                <span className="text-[10px] text-white/50">推理 API Key (策划/Prompt)</span>
+                <span className="text-[9px] text-[#86efac]/80 bg-[#86efac]/10 px-1.5 py-0.5 rounded">支持免费层</span>
+              </div>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => { setApiKeyState(e.target.value); setApiKey(e.target.value); }}
+                onBlur={() => { if (apiKey.trim()) loadModels(); }}
+                placeholder="填入免费层或主 API Key"
+                className="border border-[#595959] focus:border-[#969696] rounded-xl w-full px-3 py-2 bg-transparent text-[11px] font-medium text-white placeholder-[rgba(218,220,224,0.4)] focus:outline-none"
+              />
+            </div>
+            <div>
+              <div className="flex justify-between items-center px-1 mb-1">
+                <span className="text-[10px] text-white/50">生图 API Key (Nano Banana)</span>
+                <span className="text-[9px] text-[#93c5fd]/80 bg-[#93c5fd]/10 px-1.5 py-0.5 rounded">付费层 / 留空同上</span>
+              </div>
+              <input
+                type="password"
+                value={imageApiKey}
+                onChange={(e) => { setImageApiKeyState(e.target.value); setImageApiKey(e.target.value); }}
+                onBlur={() => { if (imageApiKey.trim() || apiKey.trim()) loadModels(); }}
+                placeholder="填入付费生图 API Key (留空则使用上方Key)"
+                className="border border-[#595959] focus:border-[#969696] rounded-xl w-full px-3 py-2 bg-transparent text-[11px] font-medium text-white placeholder-[rgba(218,220,224,0.4)] focus:outline-none"
+              />
+            </div>
+          </div>
           <FieldDropdown
             label="Text Model (推理模型)"
             value={textModel}
