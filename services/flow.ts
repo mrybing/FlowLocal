@@ -88,6 +88,12 @@ export async function fetchAvailableModels(): Promise<{
       ...TEXT_MODELS,
     };
 
+    // 缓存完整的映射关系到本地
+    cachedDynamicModels = { ...mergedText, ...dynamicImage };
+    try {
+      localStorage.setItem(DYNAMIC_MODELS_CACHE_KEY, JSON.stringify(cachedDynamicModels));
+    } catch (e) {}
+
     return {
       textModels: mergedText,
       imageModels: dynamicImage,
@@ -96,6 +102,64 @@ export async function fetchAvailableModels(): Promise<{
     console.warn('自动拉取可用模型失败，使用预设模型列表:', err);
     return { textModels: { ...TEXT_MODELS }, imageModels: { ...IMAGE_MODELS } };
   }
+}
+
+const DYNAMIC_MODELS_CACHE_KEY = 'flowlocal.dynamicModelsMap';
+let cachedDynamicModels: Record<string, string> = {};
+try {
+  const saved = localStorage.getItem(DYNAMIC_MODELS_CACHE_KEY);
+  if (saved) cachedDynamicModels = JSON.parse(saved);
+} catch (e) {}
+
+/**
+ * 稳健解析模型名称：
+ * 优先从映射表获取；其次如果包含 "(model-id)" 提取括号内真实的 ID；最后若是纯 ID 直接使用。
+ */
+export function resolveModelId(selected: string, defaultFallback: string, predefinedMap: Record<string, string>): string {
+  if (!selected) return defaultFallback;
+  if (predefinedMap[selected]) return predefinedMap[selected];
+  if (cachedDynamicModels[selected]) return cachedDynamicModels[selected];
+
+  const match = selected.match(/\(([^)]+)\)$/);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+
+  if (!selected.includes(' ')) {
+    return selected.trim();
+  }
+
+  return defaultFallback;
+}
+
+/**
+ * 针对 Google API 免费层级或高峰期偶发 503（UNAVAILABLE / 高峰排队）或 429（RESOURCE_EXHAUSTED / 配额限流）的指数退避重试
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelayMs = 2000): Promise<T> {
+  let lastError: any;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const msg = String(err?.message || '');
+      const status = err?.status || err?.code;
+      const isRateOrBusy = 
+        status === 503 || status === 429 ||
+        msg.includes('503') || msg.includes('429') ||
+        msg.includes('high demand') || msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('UNAVAILABLE') || msg.includes('temporary');
+
+      if (isRateOrBusy && i < retries) {
+        const delay = initialDelayMs * Math.pow(1.5, i);
+        console.warn(`[Gemini API (免费层级)] 遇到配额或服务排队高峰 (${msg})，${(delay / 1000).toFixed(1)}s 后自动重试第 ${i + 1} 次...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 type Img = { base64: string; mimeType: string };
@@ -115,13 +179,30 @@ export const Flow = {
       options: { systemInstruction?: string; images?: Img[] } = {}
     ): Promise<{ text: string }> {
       const selected = getTextModelName();
-      const modelId = TEXT_MODELS[selected] || selected || TEXT_MODEL;
-      const res = await client().models.generateContent({
-        model: modelId,
-        contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
-        config: { systemInstruction: options.systemInstruction },
-      });
-      return { text: res.text || '' };
+      const modelId = resolveModelId(selected, TEXT_MODEL, TEXT_MODELS);
+      try {
+        return await withRetry(async () => {
+          const res = await client().models.generateContent({
+            model: modelId,
+            contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
+            config: { systemInstruction: options.systemInstruction },
+          });
+          return { text: res.text || '' };
+        });
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        // 若重试后依然由于 Google 503 高峰不可用，且当前不是 gemini-2.5-flash，自动使用 2.5-flash 降级兜底
+        if ((msg.includes('503') || msg.includes('high demand') || msg.includes('UNAVAILABLE')) && modelId !== 'gemini-2.5-flash') {
+          console.warn(`[Gemini API] 模型 ${modelId} 遭遇严重高峰无法使用，自动降级至 gemini-2.5-flash 进行兜底重试...`);
+          const fallbackRes = await client().models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
+            config: { systemInstruction: options.systemInstruction },
+          });
+          return { text: fallbackRes.text || '' };
+        }
+        throw err;
+      }
     },
 
     /**
@@ -135,30 +216,32 @@ export const Flow = {
       referenceImages?: Img[];
     }): Promise<MediaAsset> {
       const selected = getImageModelName();
-      const modelId = IMAGE_MODELS[selected] || selected || 'gemini-3.1-flash-image-preview';
+      const modelId = resolveModelId(selected, 'gemini-3.1-flash-image-preview', IMAGE_MODELS);
       const parts = [
         ...(opts.referenceImages || []).map(i => ({ inlineData: { mimeType: i.mimeType, data: i.base64 } })),
         { text: opts.prompt },
       ];
-      const res = await client().models.generateContent({
-        model: modelId,
-        contents: [{ role: 'user', parts }],
-        config: {
-          responseModalities: ['TEXT', 'IMAGE'],
-          imageConfig: { aspectRatio: opts.aspectRatio },
-        },
+      return await withRetry(async () => {
+        const res = await client().models.generateContent({
+          model: modelId,
+          contents: [{ role: 'user', parts }],
+          config: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            imageConfig: { aspectRatio: opts.aspectRatio },
+          },
+        });
+        const outParts = res.candidates?.[0]?.content?.parts || [];
+        const imgPart = outParts.find(p => p.inlineData?.data);
+        if (!imgPart?.inlineData?.data) {
+          const textOut = outParts.map(p => p.text).filter(Boolean).join(' ');
+          throw new Error(`模型没有返回图片。${textOut ? '模型回复：' + textOut : ''}`);
+        }
+        return {
+          mediaId: crypto.randomUUID(),
+          base64: imgPart.inlineData.data,
+          mimeType: imgPart.inlineData.mimeType || 'image/png',
+        };
       });
-      const outParts = res.candidates?.[0]?.content?.parts || [];
-      const imgPart = outParts.find(p => p.inlineData?.data);
-      if (!imgPart?.inlineData?.data) {
-        const textOut = outParts.map(p => p.text).filter(Boolean).join(' ');
-        throw new Error(`模型没有返回图片。${textOut ? '模型回复：' + textOut : ''}`);
-      }
-      return {
-        mediaId: crypto.randomUUID(),
-        base64: imgPart.inlineData.data,
-        mimeType: imgPart.inlineData.mimeType || 'image/png',
-      };
     },
   },
 

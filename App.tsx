@@ -231,10 +231,13 @@ export default function VisualPromptApp() {
     try {
       let currentGlobal = { ...globalContext };
       
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
       if (currentGlobal.globalStyleImage && !currentGlobal.global_analysis) {
         const analysis = await extractGlobalParams(currentGlobal.globalStyleImage);
         currentGlobal = { ...currentGlobal, global_analysis: analysis };
         setGlobalContext(currentGlobal);
+        await sleep(600);
       }
       let currentIdx = -1;
       try {
@@ -244,6 +247,7 @@ export default function VisualPromptApp() {
         if (!sp.name.trim() || sp.status === 'completed' || sp.status === 'generating') continue;
         updateSP(i, { status: 'analyzing' });
         const visual = await extractVisualParams(sp, currentGlobal);
+        await sleep(600);
         
         updateSP(i, { status: 'narrating', enrichment: { ...sp.enrichment, visual_params: visual } });
         const narrative = await generateNarrative({ ...sp, enrichment: { ...sp.enrichment, visual_params: visual } }, currentGlobal, sellingPoints);
@@ -255,6 +259,7 @@ export default function VisualPromptApp() {
           status: 'awaiting_review', 
           enrichment: { ...sp.enrichment, visual_params: visual, narrative_concept: narrative, final_prompt: prompt } 
         });
+        await sleep(800);
       }
       } catch (err) {
         if (currentIdx >= 0) updateSP(currentIdx, { status: 'error', error: String(err) });
