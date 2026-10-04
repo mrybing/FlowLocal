@@ -8,11 +8,12 @@ import type { MediaAsset } from '../types';
 
 // ---------- Settings (stored in localStorage) ----------
 export const TEXT_MODELS: Record<string, string> = {
-  'Gemini 2.5 Flash (推荐)': 'gemini-2.5-flash',
+  'Gemini 3.8 Flash (推荐)': 'gemini-3.8-flash',
+  'Gemini 2.5 Flash': 'gemini-2.5-flash',
   'Gemini 2.0 Flash': 'gemini-2.0-flash',
   'Gemini 1.5 Pro': 'gemini-1.5-pro',
 };
-export const TEXT_MODEL = 'gemini-2.5-flash';
+export const TEXT_MODEL = 'gemini-3.8-flash';
 
 export const IMAGE_MODELS: Record<string, string> = {
   'Nano Banana 2': 'gemini-3.1-flash-image-preview',
@@ -30,7 +31,7 @@ export function setApiKey(key: string) {
 }
 export function getTextModelName(): string {
   const saved = localStorage.getItem(TEXT_MODEL_STORAGE);
-  return saved && TEXT_MODELS[saved] ? saved : 'Gemini 2.5 Flash (推荐)';
+  return saved && TEXT_MODELS[saved] ? saved : 'Gemini 3.8 Flash (推荐)';
 }
 export function setTextModelName(name: string) {
   localStorage.setItem(TEXT_MODEL_STORAGE, name);
