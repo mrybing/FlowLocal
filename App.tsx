@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Flow, getApiKey, setApiKey, getImageModelName, setImageModelName, IMAGE_MODELS } from './services/flow';
+import { Flow, getApiKey, setApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS } from './services/flow';
 import { SellingPoint, GlobalContext } from './types';
 import { extractVisualParams, generateNarrative, compilePrompt, extractGlobalParams, parseAspectRatio, buildGenerationRefs, spUsesModels } from './services/workflow';
 // --- Hooks ---
@@ -135,6 +135,7 @@ export default function VisualPromptApp() {
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [apiKey, setApiKeyState] = useState(getApiKey());
+  const [textModel, setTextModelState] = useState(getTextModelName());
   const [imageModel, setImageModelState] = useState(getImageModelName());
   const importInputRef = useRef<HTMLInputElement>(null);
   const exportInputs = () => {
@@ -275,7 +276,14 @@ export default function VisualPromptApp() {
             className="border border-[#595959] focus:border-[#969696] rounded-xl w-full px-3 py-2.5 bg-transparent text-[11px] font-medium text-white placeholder-[rgba(218,220,224,0.75)] focus:outline-none"
           />
           <FieldDropdown
-            label="Image Model"
+            label="Text Model (推理模型)"
+            value={textModel}
+            options={Object.keys(TEXT_MODELS)}
+            onChange={(v) => { setTextModelState(v); setTextModelName(v); }}
+            className="w-full"
+          />
+          <FieldDropdown
+            label="Image Model (生图模型)"
             value={imageModel}
             options={Object.keys(IMAGE_MODELS)}
             onChange={(v) => { setImageModelState(v); setImageModelName(v); }}

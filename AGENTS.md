@@ -24,9 +24,9 @@
 | 框架 | React 18 + TypeScript，Vite 5 构建 |
 | 样式 | Tailwind（`index.html` 中 CDN 引入，无构建配置）+ Google Sans Text + Material Symbols |
 | AI SDK | `@google/genai`，浏览器直连，无后端 |
-| 推理模型 | `gemini-3.1-pro-preview`（固定） |
+| 推理模型 | 界面下拉切换：`gemini-2.5-flash`（默认推荐）/ `gemini-2.0-flash` / `gemini-1.5-pro` |
 | 生图模型 | 界面下拉切换：Nano Banana 2 = `gemini-3.1-flash-image-preview`（默认）/ Nano Banana Pro = `gemini-3-pro-image-preview` |
-| 持久化 | 仅 localStorage 保存 API Key 与生图模型；项目数据不自动保存，刷新即重置 |
+| 持久化 | 仅 localStorage 保存 API Key 与所选模型；项目数据不自动保存，刷新即重置 |
 
 运行：`npm install` → `npm run dev`（默认 http://localhost:5173）。类型检查：`npx tsc --noEmit`。
 

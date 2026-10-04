@@ -7,12 +7,19 @@ import { GoogleGenAI } from '@google/genai';
 import type { MediaAsset } from '../types';
 
 // ---------- Settings (stored in localStorage) ----------
-export const TEXT_MODEL = 'gemini-3.1-pro-preview';
+export const TEXT_MODELS: Record<string, string> = {
+  'Gemini 2.5 Flash (推荐)': 'gemini-2.5-flash',
+  'Gemini 2.0 Flash': 'gemini-2.0-flash',
+  'Gemini 1.5 Pro': 'gemini-1.5-pro',
+};
+export const TEXT_MODEL = 'gemini-2.5-flash';
+
 export const IMAGE_MODELS: Record<string, string> = {
   'Nano Banana 2': 'gemini-3.1-flash-image-preview',
   'Nano Banana Pro': 'gemini-3-pro-image-preview',
 };
 const KEY_STORAGE = 'flowlocal.apiKey';
+const TEXT_MODEL_STORAGE = 'flowlocal.textModel';
 const IMAGE_MODEL_STORAGE = 'flowlocal.imageModel';
 
 export function getApiKey(): string {
@@ -20,6 +27,13 @@ export function getApiKey(): string {
 }
 export function setApiKey(key: string) {
   localStorage.setItem(KEY_STORAGE, key.trim());
+}
+export function getTextModelName(): string {
+  const saved = localStorage.getItem(TEXT_MODEL_STORAGE);
+  return saved && TEXT_MODELS[saved] ? saved : 'Gemini 2.5 Flash (推荐)';
+}
+export function setTextModelName(name: string) {
+  localStorage.setItem(TEXT_MODEL_STORAGE, name);
 }
 export function getImageModelName(): string {
   const saved = localStorage.getItem(IMAGE_MODEL_STORAGE);
@@ -51,8 +65,9 @@ export const Flow = {
       prompt: string,
       options: { systemInstruction?: string; images?: Img[] } = {}
     ): Promise<{ text: string }> {
+      const modelId = TEXT_MODELS[getTextModelName()] || TEXT_MODEL;
       const res = await client().models.generateContent({
-        model: TEXT_MODEL,
+        model: modelId,
         contents: [{ role: 'user', parts: toParts(prompt, options.images) }],
         config: { systemInstruction: options.systemInstruction },
       });
