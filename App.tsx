@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Flow, getApiKey, setApiKey, getImageApiKey, setImageApiKey, getImageModelName, setImageModelName, IMAGE_MODELS, getTextModelName, setTextModelName, TEXT_MODELS, fetchAvailableModels } from './services/flow';
 import { SellingPoint, GlobalContext } from './types';
-import { extractVisualParams, generateNarrative, compilePrompt, extractGlobalParams, parseAspectRatio, buildGenerationRefs, spUsesModels } from './services/workflow';
+import { extractVisualParams, generateNarrative, compilePrompt, extractGlobalParams, parseAspectRatio, buildGenerationRefs, spUsesModels, resolveActiveModelIds } from './services/workflow';
 // --- Hooks ---
 function useOnClickOutside(ref: React.RefObject<HTMLElement | null>, handler: (e: MouseEvent | TouchEvent) => void) {
   useEffect(() => {
@@ -252,10 +252,15 @@ export default function VisualPromptApp() {
         await sleep(600);
         
         updateSP(i, { status: 'narrating', enrichment: { ...sp.enrichment, visual_params: visual } });
-        const narrative = await generateNarrative({ ...sp, enrichment: { ...sp.enrichment, visual_params: visual } }, currentGlobal, sellingPoints);
+        // Freeze which models this selling point uses (count from Node 2 / manual pick), shared by narrative + refs
+        const withVisual: SellingPoint = { ...sp, enrichment: { ...sp.enrichment, visual_params: visual } };
+        const activeModelIds = resolveActiveModelIds(withVisual, currentGlobal);
+        const spReady: SellingPoint = { ...withVisual, activeModelIds };
+        updateSP(i, { activeModelIds });
+        const narrative = await generateNarrative(spReady, currentGlobal, sellingPoints);
         
         updateSP(i, { status: 'compiling', enrichment: { ...sp.enrichment, visual_params: visual, narrative_concept: narrative } });
-        const prompt = compilePrompt({ ...sp, enrichment: { ...sp.enrichment, visual_params: visual, narrative_concept: narrative } }, currentGlobal);
+        const prompt = compilePrompt({ ...spReady, enrichment: { ...spReady.enrichment, narrative_concept: narrative } }, currentGlobal);
         
         updateSP(i, { 
           status: 'awaiting_review', 
@@ -433,14 +438,31 @@ export default function VisualPromptApp() {
                     <textarea className="bg-transparent text-sm text-white/50 outline-none resize-none h-24" placeholder="Briefly describe what this selling point visualizes..." value={sp.description} onChange={e => updateSP(idx, { description: e.target.value })} />
                  </div>
                </div>
-               <div className="flex items-center gap-3">
+               <div className="flex items-center gap-3 flex-wrap">
                   <FieldDropdown
                     label="Model usage"
-                    value={sp.modelMode === 'with_model' ? 'Use models' : sp.modelMode === 'no_model' ? 'No models (product only)' : 'Auto (by image type)'}
-                    options={['Auto (by image type)', 'Use models', 'No models (product only)']}
-                    onChange={(v) => updateSP(idx, { modelMode: v === 'Use models' ? 'with_model' : v === 'No models (product only)' ? 'no_model' : 'auto' })}
+                    value={sp.modelMode === 'with_model' ? 'Manual pick' : sp.modelMode === 'no_model' ? 'No models (product only)' : 'Auto (by selling point)'}
+                    options={['Auto (by selling point)', 'Manual pick', 'No models (product only)']}
+                    onChange={(v) => updateSP(idx, { modelMode: v === 'Manual pick' ? 'with_model' : v === 'No models (product only)' ? 'no_model' : 'auto' })}
                     className="w-56"
                   />
+                  {sp.modelMode === 'with_model' && globalContext.modelReferences.map((m, mi) => (m.model || m.suit) && (
+                    <label key={m.id} className="flex items-center gap-1 text-[11px] text-white/80 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="accent-blue-500"
+                        checked={!!sp.manualModelIds?.includes(m.id)}
+                        onChange={(e) => {
+                          const cur = sp.manualModelIds || [];
+                          updateSP(idx, { manualModelIds: e.target.checked ? [...cur, m.id] : cur.filter(x => x !== m.id) });
+                        }}
+                      />
+                      Model {String.fromCharCode(65 + mi)}
+                    </label>
+                  ))}
+                  {sp.modelMode === 'with_model' && !(sp.manualModelIds || []).some(id => globalContext.modelReferences.some(m => m.id === id && (m.model || m.suit))) && (
+                    <span className="text-[10px] text-yellow-500/80">None ticked = use all models</span>
+                  )}
                   {sp.enrichment.visual_params && (
                     <span className="text-[10px] text-white/40">
                       Type: {sp.enrichment.visual_params.image_type} · {spUsesModels(sp, globalContext) ? 'with models' : 'no models'} (re-run Process after changing)

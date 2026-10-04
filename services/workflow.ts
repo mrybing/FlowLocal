@@ -1,5 +1,5 @@
 import { Flow } from './flow';
-import { SellingPoint, GlobalContext, VisualParams, NarrativeConcept, GlobalAnalysis, MediaAsset } from '../types';
+import { SellingPoint, GlobalContext, VisualParams, NarrativeConcept, GlobalAnalysis, MediaAsset, ModelSuitPair } from '../types';
 /**
  * Utility: Safe JSON Parsing with basic self-healing
  */
@@ -90,6 +90,7 @@ IMAGE TYPE CLASSIFICATION (decide this first, using the reference image AND the 
 - Studio_Minimal: clean studio product shot, product-only. Usually NO human model.
 - Lifestyle_Commercial: real-life scene photography where people wear/use the product.
 - requires_model = true ONLY if the finished advertising image should contain a human (the selling point needs a person wearing/using/interacting with the product). Product-only, CGI, macro, or exploded/feature-diagram visuals => false.
+- model_count = how many FEATURED (lead) people the finished image needs to communicate THIS selling point (background extras / crowds do NOT count). Start from the number of main people in the reference image, then adjust by the selling point text (e.g. "sharing", "couple", "friends", "family" => 2+; personal comfort / fit / solo use => 1). 0 when requires_model is false.
 Output ONLY valid JSON with these fields:
 {
   "subject": "main subject and visual treatment",
@@ -104,6 +105,7 @@ Output ONLY valid JSON with these fields:
   "shot_scale": "shot scale",
   "image_type": "one of: CGI_Abstract, Studio_Minimal, Lifestyle_Commercial, Unknown",
   "requires_model": true or false (boolean, see classification rules),
+  "model_count": integer (0 if requires_model is false, otherwise 1 or more),
   "visual_signature_prompt": "concise visual+mood essence for this image approach",
   "color_palette": "dominant and accent colors",
   "material_focus": "key material/texture qualities"
@@ -132,6 +134,42 @@ export function spUsesModels(sp: SellingPoint, globalContext: GlobalContext): bo
   if (!v) return true;
   if (typeof v.requires_model === 'boolean') return v.requires_model;
   return v.image_type === 'Lifestyle_Commercial' || v.image_type === 'Unknown';
+}
+/** Model slots that actually have an image uploaded, keeping their sidebar letter (A, B, C…). */
+function availableModels(globalContext: GlobalContext): Array<{ pair: ModelSuitPair; letter: string }> {
+  return globalContext.modelReferences
+    .map((pair, i) => ({ pair, letter: String.fromCharCode(65 + i) }))
+    .filter(x => x.pair.model || x.pair.suit);
+}
+/**
+ * Decide WHICH models this selling point uses. Call once at Process time (after Node 2)
+ * and store the result in sp.activeModelIds.
+ * - no models -> []
+ * - with_model (manual pick) -> ticked ids (none ticked = all)
+ * - auto -> Node 2 model_count (default 1), randomly picked from uploaded models
+ */
+export function resolveActiveModelIds(sp: SellingPoint, globalContext: GlobalContext): string[] {
+  if (!spUsesModels(sp, globalContext)) return [];
+  const avail = availableModels(globalContext).map(x => x.pair.id);
+  if (sp.modelMode === 'with_model') {
+    const picked = avail.filter(id => sp.manualModelIds?.includes(id));
+    return picked.length > 0 ? picked : avail;
+  }
+  const raw = Number(sp.enrichment.visual_params?.model_count);
+  const count = Math.min(avail.length, Math.max(1, Number.isFinite(raw) ? Math.round(raw) : 1));
+  const shuffled = [...avail].sort(() => Math.random() - 0.5);
+  const chosen = new Set(shuffled.slice(0, count));
+  return avail.filter(id => chosen.has(id)); // keep A, B, C order
+}
+/**
+ * Models used by this selling point (single source for narrative images, legend, tokens and refs).
+ * Uses the ids frozen at Process time; falls back to all uploaded models if not resolved yet.
+ */
+export function getActiveModels(sp: SellingPoint, globalContext: GlobalContext): Array<{ pair: ModelSuitPair; letter: string }> {
+  if (!spUsesModels(sp, globalContext)) return [];
+  const avail = availableModels(globalContext);
+  if (!sp.activeModelIds) return avail;
+  return avail.filter(x => sp.activeModelIds!.includes(x.pair.id));
 }
 /**
  * SINGLE SOURCE OF TRUTH for the image-generation reference list.
@@ -163,13 +201,10 @@ export function buildGenerationRefs(sp: SellingPoint, globalContext: GlobalConte
     if (asset) refs.push({ index: refs.length + 1, token, noun, caption, asset });
   };
   push('{{PRODUCT}}', 'the product', 'the advertised product (keep exact shape, logo, proportions)', globalContext.productImage);
-  if (spUsesModels(sp, globalContext)) {
-    globalContext.modelReferences.forEach((m, i) => {
-      const L = String.fromCharCode(65 + i);
-      push(`{{MODEL_${L}}}`, 'the person', `Model ${L} face and body (keep identity)`, m.model);
-      push(`{{OUTFIT_${L}}}`, `the outfit`, `Model ${L} outfit (clothing, not the product)`, m.suit);
-    });
-  }
+  getActiveModels(sp, globalContext).forEach(({ pair: m, letter: L }) => {
+    push(`{{MODEL_${L}}}`, 'the person', `Model ${L} face and body (keep identity)`, m.model);
+    push(`{{OUTFIT_${L}}}`, `the outfit`, `Model ${L} outfit (clothing, not the product)`, m.suit);
+  });
   push('{{ENV}}', 'the environment', 'environment/scene reference', globalContext.environmentImage);
   return refs.slice(0, 14);
 }
@@ -224,7 +259,6 @@ function buildModelImageDescriptions(globalContext: GlobalContext): string {
  */
 function collectNarrativeImages(sp: SellingPoint, globalContext: GlobalContext): Array<{ base64: string; mimeType: string }> {
   globalContext = withSpEnv(sp, globalContext);
-  const useModels = spUsesModels(sp, globalContext);
   const images: Array<{ base64: string; mimeType: string }> = [];
   // 1. Product image — if available
   if (globalContext.productImage) {
@@ -238,8 +272,8 @@ function collectNarrativeImages(sp: SellingPoint, globalContext: GlobalContext):
   if (sp.referenceImage) {
     images.push({ base64: sp.referenceImage.base64, mimeType: sp.referenceImage.mimeType });
   }
-  // 4. Model reference images (only when this selling point uses models)
-  if (useModels) globalContext.modelReferences.forEach(m => {
+  // 4. Model reference images (only the models this selling point uses)
+  getActiveModels(sp, globalContext).forEach(({ pair: m }) => {
     if (m.model) images.push({ base64: m.model.base64, mimeType: m.model.mimeType });
     if (m.suit) images.push({ base64: m.suit.base64, mimeType: m.suit.mimeType });
   });
@@ -250,7 +284,6 @@ function collectNarrativeImages(sp: SellingPoint, globalContext: GlobalContext):
  */
 function buildImageLegend(sp: SellingPoint, globalContext: GlobalContext): string {
   globalContext = withSpEnv(sp, globalContext);
-  const useModels = spUsesModels(sp, globalContext);
   const legend: string[] = [];
   let idx = 1;
   if (globalContext.productImage) {
@@ -270,8 +303,7 @@ function buildImageLegend(sp: SellingPoint, globalContext: GlobalContext): strin
     legend.push(`Image ${idx}: SELLING POINT REFERENCE — Shows the desired VISUAL APPROACH for composition and product presentation.${envOverrideNote}`);
     idx++;
   }
-  if (useModels) globalContext.modelReferences.forEach((m, i) => {
-    const letter = String.fromCharCode(65 + i);
+  getActiveModels(sp, globalContext).forEach(({ pair: m, letter }) => {
     if (m.model) {
       legend.push(`Image ${idx}: {{MODEL_${letter}}} — Character reference. Maintain this person's appearance exactly.`);
       idx++;
@@ -306,9 +338,14 @@ export async function generateNarrative(
   const imageLegend = buildImageLegend(sp, globalContext);
   
   const useModels = spUsesModels(sp, globalContext);
-  const modelCount = useModels ? globalContext.modelReferences.filter(m => m.model).length : 0;
+  const activeModels = getActiveModels(sp, globalContext);
+  const modelCount = activeModels.length;
+  const modelLetters = activeModels.map(x => `Model ${x.letter}`).join(', ');
   const noModelSection = !useModels ? `
 NO HUMAN MODEL: This selling point's image type (${visual.image_type}) is product-focused. Do NOT include any person, hands, or body parts. Focus entirely on the product and its staging.
+` : '';
+  const castSection = modelCount > 0 ? `
+CAST: The featured (lead) people are ${modelLetters}. Only they use model tokens and keep their reference identity. If the scene naturally needs more people (e.g. party, crowd, group activity), you MAY add unnamed extras described generically (no tokens), keeping the leads and {{PRODUCT}} as the focus.
 ` : '';
   const hasEnvImage = !!withSpEnv(sp, globalContext).environmentImage;
   
@@ -388,7 +425,7 @@ TOKEN SEMANTICS:
 - {{MODEL_X}} = a human model (character consistency).
 - {{OUTFIT_X}} = the model's WARDROBE (NOT the advertised product).
 - {{ENV}} = environment/location reference.
-${modelDirectionSection}${noModelSection}
+${modelDirectionSection}${castSection}${noModelSection}
 BRAND CONTEXT (reference only):
 Tone: ${globalContext.brand_tone || 'Premium'}
 ${crossSPSection}

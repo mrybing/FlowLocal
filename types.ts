@@ -8,6 +8,7 @@ export interface VisualParams {
   shot_scale: string;
   image_type: ImageType;
   requires_model: boolean;        // Whether this selling point's image should feature human models
+  model_count?: number;           // How many people the finished image should feature (0 when requires_model is false)
   visual_signature_prompt: string;
   color_palette?: string;
   material_focus?: string;
@@ -49,7 +50,9 @@ export interface SellingPoint {
   name: string;
   description: string;
   referenceImage?: MediaAsset;
-  modelMode?: 'auto' | 'with_model' | 'no_model'; // User override of model usage (default auto = from image_type analysis)
+  modelMode?: 'auto' | 'with_model' | 'no_model'; // auto = Node 2 decides count + random pick; with_model = manual pick (manualModelIds); no_model
+  manualModelIds?: string[];                      // ModelSuitPair ids ticked by the user (with_model). Empty/undefined = all
+  activeModelIds?: string[];                      // Models actually used, frozen at Process time (single source for narrative + refs)
   envMode?: 'global' | 'custom' | 'none';        // Environment override: global env image (default) / this SP's own / none
   environmentImage?: MediaAsset;                  // SP-specific env image, used when envMode === 'custom'
   enrichment: {

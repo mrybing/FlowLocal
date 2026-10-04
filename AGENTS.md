@@ -74,8 +74,8 @@ FlowLocal/
 - `MediaAsset { mediaId, base64, mimeType, name? }`
 - `GlobalContext`：`product_info`、`brand_tone`、`output_spec`（画幅字符串）、`globalStyleImage?`、`productImage?`、`environmentImage?`、`modelReferences: ModelSuitPair[]`、`global_analysis?`
 - `ModelSuitPair { id, model?, suit? }`：第 i 个对应字母 `A, B, C…`
-- `SellingPoint`：`name`、`description`、`referenceImage?`、`modelMode?`（`auto | with_model | no_model`）、`envMode?`（`global | custom | none`）、`environmentImage?`（`custom` 时使用）、`enrichment { visual_params, narrative_concept, final_prompt, generatedImage? }`、`status`、`error?`
-- `VisualParams`：含 `image_type`（`CGI_Abstract | Studio_Minimal | Lifestyle_Commercial | Unknown`）与 `requires_model`（boolean）等字段。
+- `SellingPoint`：`name`、`description`、`referenceImage?`、`modelMode?`（`auto | with_model | no_model`，界面为 Auto / Manual pick / No models）、`manualModelIds?`（Manual pick 勾选的模特 id）、`activeModelIds?`（Process 时固化的实际使用模特）、`envMode?`（`global | custom | none`）、`environmentImage?`（`custom` 时使用）、`enrichment { visual_params, narrative_concept, final_prompt, generatedImage? }`、`status`、`error?`
+- `VisualParams`：含 `image_type`（`CGI_Abstract | Studio_Minimal | Lifestyle_Commercial | Unknown`）、`requires_model`（boolean）与 `model_count`（需要几个人）等字段。
 - `SellingPoint.status`：`idle → analyzing → narrating → compiling → awaiting_review → generating → completed`，任意阶段出错为 `error`。
 
 ---
@@ -97,6 +97,7 @@ Prompt + buildGenerationRefs 的参考图 ──Flow.generate.image──▶ 成
 - 只看该卖点参考图 + 卖点文案 + 商品信息，**不受全局风格影响**。
 - 输出商品陈列策略、视觉焦点、情绪、空间关系、灯光、环境、构图、机位、景别等，字数有严格上限。
 - **图片类型分类**：判定 `image_type` 与 `requires_model`。CGI / 白底 / 纯产品图类为 false，真实场景且有人穿戴 / 使用产品的为 true。
+- **人数判断**：输出 `model_count`，依据参考图人数 + 卖点文案（分享 / 情侣 / 家庭 → 多人，个人体验 → 1 人），取讲清卖点所需的最少人数。
 
 ### Node 3：`generateNarrative`
 - 输入：产品图、环境图、卖点参考图、（需要模特时）各模特 / 服装图，并附带图例说明。
@@ -128,7 +129,7 @@ Prompt + buildGenerationRefs 的参考图 ──Flow.generate.image──▶ 成
 Nano Banana 按输入顺序把图片对应为 image 1、image 2…，因此 Prompt 中的编号必须与实际传入顺序严格一致。
 
 - `buildGenerationRefs(sp, globalContext)` 是**生图参考图列表的唯一来源**；`compilePrompt` 与 `App.tsx` 的 `confirmAndGenerate` 都调用它，**禁止另行拼装顺序**。
-- 顺序：产品图 → 各模特的人像 / 服装（仅 `spUsesModels` 为 true 时）→ 环境图（经 `withSpEnv` 解析）。
+- 顺序：产品图 → 该卖点**实际使用**的模特人像 / 服装（`getActiveModels`，字母沿用侧边栏 A/B/C）→ 环境图（经 `withSpEnv` 解析）。
 - 只给**实际上传**的图编号，空槽位跳过，编号连续；最多 14 张。
 - **卖点参考图只用于分析，不传入生图，也不编号。**
 - Prompt 的编号在点击 Process 时固化；之后增删参考图，需重新 Process 才能更新编号。
@@ -138,6 +139,7 @@ Nano Banana 按输入顺序把图片对应为 image 1、image 2…，因此 Prom
 ## 7. 卖点级覆盖
 
 - **模特使用**（`spUsesModels`）：优先级为用户选择 `modelMode`（`with_model` / `no_model`）> Node 2 的 `requires_model` > 默认 true。全局没有任何模特 / 服装图时恒为 false。影响：叙事输入、Token 清单、生图参考图、Prompt 块标题。
+- **使用哪几个模特**（`resolveActiveModelIds` → `sp.activeModelIds`）：Process 时在 Node 2 之后计算一次并固化。Auto：按 `model_count`（默认 1，不超过已上传人数）从已上传模特中**随机**抽取，每次 Process 重新抽；Manual pick：用卖点卡片上勾选的模特（都不勾 = 全部）。叙事图片 / 图例 / Token / 生图参考图都通过 `getActiveModels` 读取，叙事中带 `CAST` 说明：选中的模特是主角（使用 Token、保持身份），场景需要时（如 party / 人群）允许额外出现无 Token 的路人，人数不做硬性限制。
 - **环境图**（`withSpEnv`）：`global`（默认，用全局环境图）/ `custom`（用该卖点自己的环境图，在卖点卡片上传）/ `none`（不使用环境图）。影响叙事的环境覆盖规则、`{{ENV}}` Token 与参考图编号。
 - 修改这两项后需重新点击 Process 才会生效。
 
